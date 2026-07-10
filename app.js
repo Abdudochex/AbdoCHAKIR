@@ -1,16 +1,23 @@
+const express = require('express');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const { spawn } = require('child_process');
 const axios = require('axios');
 const fs = require('fs');
 
+// ================= DUMMY WEB SERVER (RAILWAY FIX) =================
+// هذا الجزء ضروري جداً لكي لا تقوم منصة Railway بإغلاق البوت
+const app = express();
+const PORT = process.env.PORT || 3000;
+app.get('/', (req, res) => res.send('✅ WhatsApp Bot is Running Successfully!'));
+app.listen(PORT, () => console.log(`🌐 Dummy Web Server is listening on port ${PORT}`));
+
 // ================= CONFIG =================
 const DATA_FILE = "data.json";
 
 // ⚠️ ضع رقم هاتفك هنا مع رمز الدولة وبدون علامة الزائد (+)
-// مثال: "201012345678" أو "212612345678"
 const PHONE_NUMBER = "212621790049"; 
 
-// تهيئة عميل واتساب ليتوافق مع السيرفرات السحابية (Railway, Render, etc.)
+// تهيئة المتصفح بإعدادات قوية لمنع الانهيار (Crash) على السيرفرات السحابية
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: { 
@@ -18,7 +25,10 @@ const client = new Client({
             '--no-sandbox', 
             '--disable-setuid-sandbox', 
             '--disable-dev-shm-usage',
-            '--single-process'
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--disable-gpu'
         ] 
     }
 });
