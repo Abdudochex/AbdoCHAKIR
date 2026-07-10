@@ -1,3 +1,4 @@
-[phases.setup]
-nixPkgs = ["...", "ffmpeg", "chromium"]
+providers = ["node"]
 
+[phases.setup]
+nixPkgs = ["...", "ffmpeg", "chromium", "nss", "freetype", "harfbuzz", "pango", "cairo", "atk", "alsa-lib", "glib"]
