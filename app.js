@@ -15,9 +15,36 @@ const express = require('express');
 const BOT_NUMBER = process.env.BOT_NUMBER || '212621790049';
 
 // أرقام الأدمن المتحكمين في البوت (يمكن إضافة أكثر من رقم مفصول بفاصلة عبر متغير البيئة)
-const ADMIN_NUMBERS = (process.env.ADMIN_NUMBERS || '212775925339,212621790049')
-  .split(',')
-  .map((n) => n.trim() + '@s.whatsapp.net');
+const ADMINS_FILE = path.join(__dirname, 'admins.json');
+
+// دمج أرقام الأدمن الافتراضية (من متغير البيئة) مع أي أرقام أُضيفت سابقاً عبر .addadmin
+function loadAdminNumbers() {
+  const defaults = (process.env.ADMIN_NUMBERS || '212775925339,212621790049')
+    .split(',')
+    .map((n) => n.trim())
+    .filter(Boolean);
+
+  let stored = [];
+  if (fs.existsSync(ADMINS_FILE)) {
+    try {
+      stored = JSON.parse(fs.readFileSync(ADMINS_FILE, 'utf8'));
+    } catch (e) {
+      stored = [];
+    }
+  }
+
+  const merged = Array.from(new Set([...defaults, ...stored]));
+  fs.writeFileSync(ADMINS_FILE, JSON.stringify(merged, null, 2), 'utf8');
+  return merged.map((n) => `${n}@s.whatsapp.net`);
+}
+
+// قائمة أرقام الأدمن (قابلة للتعديل أثناء التشغيل عبر .addadmin)
+let ADMIN_NUMBERS = loadAdminNumbers();
+
+function saveAdminNumbers() {
+  const rawNumbers = ADMIN_NUMBERS.map((jid) => jid.replace('@s.whatsapp.net', ''));
+  fs.writeFileSync(ADMINS_FILE, JSON.stringify(rawNumbers, null, 2), 'utf8');
+}
 
 const PLUGINS_DIR = path.join(__dirname, 'plugins');
 if (!fs.existsSync(PLUGINS_DIR)) fs.mkdirSync(PLUGINS_DIR, { recursive: true });
@@ -39,6 +66,24 @@ function isAdmin(jid) {
 function getPluginPath(name) {
   const safeName = name.replace(/[^a-zA-Z0-9_\-]/g, '');
   return path.join(PLUGINS_DIR, `${safeName}.json`);
+}
+
+// تنظيف اسم مكتبة npm من الحروف غير المرئية (مثل Zero-Width Space وعلامات اتجاه النص)
+// التي تُضاف أحياناً تلقائياً عند الكتابة/النسخ من واتساب أو لوحات المفاتيح العربية
+function sanitizePackageName(pkg) {
+  return pkg.replace(/[\u200B-\u200F\u202A-\u202E\uFEFF\u2060]/g, '').trim();
+}
+
+// يسمح بأسماء حزم npm الصحيحة فقط (عادية أو Scoped مثل @scope/name)
+function isValidPackageName(pkg) {
+  return /^(@[a-z0-9._-]+\/)?[a-z0-9._-]+(@[a-z0-9._-]+)?$/i.test(pkg);
+}
+
+// تطبيع رقم الهاتف من أي صيغة (+212 775-925339 / 00212 775 925 339 / ...) إلى أرقام فقط
+function normalizePhoneNumber(raw) {
+  let digits = raw.replace(/[^0-9]/g, '');
+  if (digits.startsWith('00')) digits = digits.slice(2); // إزالة بادئة الاتصال الدولي 00
+  return digits;
 }
 
 function extractQuotedText(msg) {
@@ -249,22 +294,81 @@ async function startBot() {
           break;
         }
 
-        case 'install': {
-          const pkg = args[0];
-          if (!pkg) {
-            await sock.sendMessage(from, { text: '❌ الاستخدام: .install اسم_المكتبة' }, { quoted: msg });
+        case 'addadmin': {
+          if (args.length === 0) {
+            await sock.sendMessage(
+              from,
+              { text: '❌ الاستخدام: .addadmin رقم_الهاتف\nمثال: .addadmin +212 775-925339' },
+              { quoted: msg }
+            );
             return;
           }
-          await sock.sendMessage(from, { text: `⏳ جاري تحميل المكتبة: ${pkg} ...` }, { quoted: msg });
-          exec(`npm install ${pkg}`, { cwd: __dirname }, async (error) => {
+          const rawNumber = args.join(' ');
+          const normalized = normalizePhoneNumber(rawNumber);
+          if (!normalized || normalized.length < 8) {
+            await sock.sendMessage(from, { text: `❌ رقم غير صالح: "${rawNumber}"` }, { quoted: msg });
+            return;
+          }
+          const newJid = `${normalized}@s.whatsapp.net`;
+          if (ADMIN_NUMBERS.includes(newJid)) {
+            await sock.sendMessage(from, { text: `⚠️ الرقم ${normalized} أدمن بالفعل.` }, { quoted: msg });
+            return;
+          }
+          ADMIN_NUMBERS.push(newJid);
+          saveAdminNumbers();
+          await sock.sendMessage(
+            from,
+            { text: `✅ تم إضافة ${normalized} كأدمن جديد بصلاحيات كاملة في التحكم بالبوت.` },
+            { quoted: msg }
+          );
+          break;
+        }
+
+        case 'install': {
+          if (args.length === 0) {
+            await sock.sendMessage(
+              from,
+              { text: '❌ الاستخدام: .install اسم_المكتبة\nأو: .install npm install اسم1 اسم2 ...' },
+              { quoted: msg }
+            );
+            return;
+          }
+
+          // نسمح بكتابة "npm install" أو "npm i" قبل أسماء المكتبات ونتجاهلها
+          let pkgArgs = [...args];
+          if (pkgArgs[0]?.toLowerCase() === 'npm') pkgArgs.shift();
+          if (pkgArgs[0]?.toLowerCase() === 'install' || pkgArgs[0]?.toLowerCase() === 'i') pkgArgs.shift();
+
+          if (pkgArgs.length === 0) {
+            await sock.sendMessage(from, { text: '❌ لم تحدد أي اسم مكتبة بعد npm install.' }, { quoted: msg });
+            return;
+          }
+
+          const packages = [];
+          for (const raw of pkgArgs) {
+            const clean = sanitizePackageName(raw);
+            if (!clean || !isValidPackageName(clean)) {
+              await sock.sendMessage(
+                from,
+                { text: `❌ اسم المكتبة غير صالح: "${raw}"\nتأكد من كتابته يدوياً بدون نسخ من رسالة أخرى (قد تحتوي حروفاً مخفية).` },
+                { quoted: msg }
+              );
+              return;
+            }
+            packages.push(clean);
+          }
+
+          const pkgList = packages.join(', ');
+          await sock.sendMessage(from, { text: `⏳ جاري تحميل المكتبات: ${pkgList} ...` }, { quoted: msg });
+          exec(`npm install ${packages.join(' ')}`, { cwd: __dirname }, async (error) => {
             if (error) {
               await sock.sendMessage(
                 from,
-                { text: `❌ فشل تحميل المكتبة: ${pkg}\n${error.message}` },
+                { text: `❌ فشل تحميل المكتبات: ${pkgList}\n${error.message}` },
                 { quoted: msg }
               );
             } else {
-              await sock.sendMessage(from, { text: `✅ تم تحميل المكتبة بنجاح: ${pkg}` }, { quoted: msg });
+              await sock.sendMessage(from, { text: `✅ تم تحميل المكتبات بنجاح: ${pkgList}` }, { quoted: msg });
             }
           });
           break;
