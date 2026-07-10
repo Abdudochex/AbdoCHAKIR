@@ -7,22 +7,13 @@ const fs = require('fs');
 // ================= DUMMY WEB SERVER =================
 const app = express();
 const PORT = process.env.PORT || 8080;
-app.get('/', (req, res) => res.send('✅ WhatsApp Bot is Running Successfully!'));
+app.get('/', (req, res) => res.send('✅ Bot is running!'));
 app.listen(PORT, '0.0.0.0', () => console.log(`🌐 Dummy Web Server is listening on port ${PORT}`));
 
-// ================= CONFIG =================
+// ================= CONFIG & STORAGE =================
 const DATA_FILE = "data.json";
 const PHONE_NUMBER = "212621790049"; 
 
-const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: '.wwebjs_auth' }),
-    puppeteer: { 
-        executablePath: '/usr/bin/google-chrome-stable',
-        args: ['--no-sandbox', '--disable-setuid-sandbox'] 
-    }
-});
-
-// ================= STORAGE & JSON =================
 function loadData() {
     if (!fs.existsSync(DATA_FILE)) return { pages: {}, channels: {} };
     try { return JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8')); } 
@@ -39,9 +30,18 @@ let userM3u8 = dataStore.channels || {};
 let activePage = {};
 let userStreams = {};
 
+// ================= CLIENT INIT =================
+const client = new Client({
+    authStrategy: new LocalAuth({ dataPath: '.wwebjs_auth' }),
+    puppeteer: { 
+        executablePath: '/usr/bin/google-chrome-stable',
+        args: ['--no-sandbox', '--disable-setuid-sandbox'] 
+    }
+});
+
+// ================= CORE LOGIC =================
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// ================= FUNCTIONS =================
 function fixDashUrl(url) {
     if (!url) return null;
     const match = url.match(/https:\/\/([^/]*?(?:video|scontent)[^/]*?\.fbcdn\.net)\//);
@@ -74,46 +74,43 @@ function launchFfmpeg(source, streamUrl) {
     return spawn("ffmpeg", ["-re", "-i", source, "-c:v", "copy", "-c:a", "aac", "-f", "flv", streamUrl], { stdio: 'ignore' });
 }
 
-async function streamThread(chatId, source, name) {
-    const { streamUrl, liveId, dash, token } = await getNewStream(chatId);
-    if (!streamUrl) { client.sendMessage(chatId, "❌ فشل إنشاء البث."); return; }
-    if (!userStreams[chatId]) userStreams[chatId] = {};
-    userStreams[chatId][name] = { proc: null, live_id: liveId, token: token, active: true };
-    
-    while (userStreams[chatId][name]?.active) {
-        let proc = userStreams[chatId][name].proc;
-        if (!proc || proc.killed) {
-            proc = launchFfmpeg(source, streamUrl);
-            userStreams[chatId][name].proc = proc;
-        }
-        await sleep(2000);
-    }
-}
-
 // ================= BOT COMMANDS =================
 client.on('message', async (msg) => {
     const chatId = msg.from;
     const text = msg.body;
-    // (باقي أوامرك الأصلية هنا)
-    if (text.startsWith('/addpage ')) { /* ... منطقك الأصلي ... */ }
-    // ... إلخ
+    
+    // استيراد الملفات
+    if (msg.hasMedia && msg.type === 'document') {
+        const media = await msg.downloadMedia();
+        if (media.filename.endsWith('.txt')) {
+            const content = Buffer.from(media.data, 'base64').toString('utf-8');
+            if (!userM3u8[chatId]) userM3u8[chatId] = {};
+            content.split('\n').forEach(line => {
+                const parts = line.split(' ');
+                if (parts.length >= 2) userM3u8[chatId][parts[0]] = parts[1];
+            });
+            saveData();
+            client.sendMessage(chatId, "💾 تم الاستيراد.");
+        }
+    }
+
+    // الأوامر الأساسية
+    if (text.startsWith('/addpage ')) {
+        const parts = text.split(' ');
+        userPages[chatId] = userPages[chatId] || {};
+        userPages[chatId][parts[1]] = { page_id: parts[2], token: parts[3] };
+        saveData();
+        client.sendMessage(chatId, "✅ تم الحفظ.");
+    }
 });
 
-// ================= CONNECTION & PAIRING =================
+// ================= PAIRING & READY =================
 client.on('qr', async () => {
-    console.log('⏳ جاري طلب كود الإقتران الرقمي...');
     try {
         const pairingCode = await client.requestPairingCode(PHONE_NUMBER);
-        console.log('\n=======================================');
-        console.log('📌 كود الإقتران الخاص بك هو:', pairingCode);
-        console.log('💡 افتح الواتساب > الأجهزة المرتبطة > ربط برقم الهاتف > أدخل الكود.');
-        console.log('=======================================\n');
-    } catch (err) { console.error('❌ تعذر طلب كود الإقتران:', err.message); }
+        console.log('📌 كود الإقتران:', pairingCode);
+    } catch (e) { console.log(e); }
 });
 
-client.on('ready', () => {
-    console.log('✅ Bot is ready and connected!');
-    client.sendMessage(`${PHONE_NUMBER}@c.us`, '✅ البوت متصل وجاهز للعمل.');
-});
-
+client.on('ready', () => console.log('✅ Bot Ready!'));
 client.initialize();
