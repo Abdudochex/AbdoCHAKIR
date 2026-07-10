@@ -1,33 +1,7 @@
-// ================= AUTO INSTALLER ENGINE =================
-const { execSync, spawn } = require('child_process');
-const fs = require('fs');
-
-const requiredPackages = ['whatsapp-web.js', 'axios', 'qrcode-terminal'];
-let needsInstall = false;
-
-for (const pkg of requiredPackages) {
-    try {
-        require.resolve(pkg);
-    } catch (e) {
-        needsInstall = true;
-        console.log(`📦 جاري اكتشاف مكتبة ناقصة: ${pkg}`);
-    }
-}
-
-if (needsInstall) {
-    console.log("⏳ السكربت يقوم الآن بتثبيت المكتبات المطلوبة تلقائياً... يرجى الانتظار (قد يستغرق بضع دقائق).");
-    try {
-        execSync(`npm install ${requiredPackages.join(' ')}`, { stdio: 'inherit' });
-        console.log("✅ تم التثبيت التلقائي بنجاح! جاري تشغيل البوت...");
-    } catch (error) {
-        console.error("❌ فشل التثبيت التلقائي. تأكد من اتصال السيرفر بالإنترنت أو امتلاكه صلاحيات npm.");
-        process.exit(1);
-    }
-}
-
-// ================= LOAD MODULES AFTER AUTO-INSTALL =================
 const { Client, LocalAuth } = require('whatsapp-web.js');
+const { spawn } = require('child_process');
 const axios = require('axios');
+const fs = require('fs');
 
 // ================= CONFIG =================
 const DATA_FILE = "data.json";
@@ -36,11 +10,16 @@ const DATA_FILE = "data.json";
 // مثال: "201012345678" أو "212612345678"
 const PHONE_NUMBER = "212621790049"; 
 
-// تهيئة عميل واتساب ليتوافق مع السيرفرات (سيقوم بتحميل متصفحه تلقائياً)
+// تهيئة عميل واتساب ليتوافق مع السيرفرات السحابية (Railway, Render, etc.)
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: { 
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] 
+        args: [
+            '--no-sandbox', 
+            '--disable-setuid-sandbox', 
+            '--disable-dev-shm-usage',
+            '--single-process'
+        ] 
     }
 });
 
