@@ -16,12 +16,16 @@ const PHONE_NUMBER = "212621790049";
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: '.wwebjs_auth' }),
     puppeteer: { 
-        executablePath: '/usr/bin/google-chrome-stable',
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--no-zygote'] 
+        headless: true, 
+        args: [
+            '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', 
+            '--disable-accelerated-2d-canvas', '--no-first-run', '--no-zygote', 
+            '--single-process', '--disable-gpu'
+        ] 
     }
 });
 
-// ================= STORAGE (As is) =================
+// ================= STORAGE MECHANISM =================
 function loadData() {
     if (!fs.existsSync(DATA_FILE)) return { pages: {}, channels: {} };
     try { return JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8')); } 
@@ -40,7 +44,7 @@ let userStreams = {};
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// ================= LOGIC (As is) =================
+// ================= LOGIC =================
 function fixDashUrl(url) {
     if (!url) return null;
     const match = url.match(/https:\/\/([^/]*?(?:video|scontent)[^/]*?\.fbcdn\.net)\//);
@@ -76,10 +80,8 @@ function launchFfmpeg(source, streamUrl) {
 async function streamThread(chatId, source, name) {
     const { streamUrl, liveId, dash, token } = await getNewStream(chatId);
     if (!streamUrl) { client.sendMessage(chatId, "❌ فشل إنشاء البث."); return; }
-    
     if (!userStreams[chatId]) userStreams[chatId] = {};
     userStreams[chatId][name] = { proc: null, live_id: liveId, token: token, active: true, source: source, dash_url: dash };
-
     setTimeout(async () => {
         try {
             const info = await axios.get(`https://graph.facebook.com/v17.0/${liveId}`, { params: { access_token: token, fields: "dash_preview_url" }, timeout: 10000 });
@@ -88,7 +90,6 @@ async function streamThread(chatId, source, name) {
             client.sendMessage(chatId, `🎥 ${name}\n👁️ DASH:\n${fresh}`);
         } catch (e) {}
     }, 20000);
-
     while (userStreams[chatId]?.[name]?.active) {
         let proc = userStreams[chatId][name].proc;
         if (!proc || proc.killed) {
@@ -111,26 +112,58 @@ async function stopStream(chatId, name) {
     delete userStreams[chatId][name];
 }
 
-// ================= COMMANDS & MESSAGE HANDLERS (As is) =================
+// ================= COMMANDS =================
 client.on('message', async (msg) => {
     const chatId = msg.from;
     const text = msg.body;
-    // (جميع الأوامر: /addpage, /usepage, /savem3u8, /m3u8list, /stopall, /check, /testall, /testm3u8 كما هي تماماً)
-    // ملاحظة: قم بلصق منطق الأوامر الخاص بك هنا، لقد حافظت على الهيكل البرمجي
-    // ... [منطق الرسائل والأوامر الخاص بك] ...
+    if (msg.hasMedia && msg.type === 'document') {
+        const media = await msg.downloadMedia();
+        if (media.filename?.toLowerCase().endsWith('.txt')) {
+            const content = Buffer.from(media.data, 'base64').toString('utf-8');
+            if (!userM3u8[chatId]) userM3u8[chatId] = {};
+            content.split(/\r?\n/).forEach(line => {
+                const parts = line.trim().split(/\s+(.+)/);
+                if (parts.length >= 2 && parts[1].startsWith("http")) userM3u8[chatId][parts[0]] = parts[1].trim();
+            });
+            saveData();
+            client.sendMessage(chatId, `💾 تم استيراد القنوات بنجاح.`);
+        }
+    } else if (text.startsWith('/addpage ')) {
+        const p = text.split(/\s+/);
+        if (!userPages[chatId]) userPages[chatId] = {};
+        userPages[chatId][p[1]] = { page_id: p[2], token: p.slice(3).join(' ') };
+        saveData();
+        client.sendMessage(chatId, `✅ تم إضافة الصفحة ${p[1]}`);
+    } else if (text.startsWith('/usepage ')) {
+        activePage[chatId] = text.split(' ')[1];
+        client.sendMessage(chatId, `🎯 الصفحة النشطة: ${activePage[chatId]}`);
+    } else if (text === '/m3u8list') {
+        const data = userM3u8[chatId] || {};
+        client.sendMessage(chatId, "📺 القنوات:\n" + Object.keys(data).map(n => `- ${n}`).join('\n'));
+    } else if (text === '/stopall') {
+        for (const name of Object.keys(userStreams[chatId] || {})) { stopStream(chatId, name); client.sendMessage(chatId, `🛑 تم إيقاف: ${name}`); }
+    } else if (text === '/testm3u8') {
+        let report = "🧪 تقرير الفحص:\n";
+        for (const [name, url] of Object.entries(userM3u8[chatId] || {})) {
+            try { await axios.head(url, { timeout: 5000 }); report += `- ${name} -> شغال ✅\n`; } catch (e) { report += `- ${name} -> معطل ❌\n`; }
+        }
+        client.sendMessage(chatId, report);
+    } else if (text && !text.startsWith('/')) {
+        if (!activePage[chatId]) { client.sendMessage(chatId, "⚠️ اختر صفحة أولاً بـ /usepage"); return; }
+        text.split(/\r?\n/).forEach(name => { if (userM3u8[chatId][name]) streamThread(chatId, userM3u8[chatId][name], name); });
+    }
 });
 
-// ================= PAIRING CODE (The Solution) =================
+// ================= PAIRING & READY =================
 client.on('qr', async (qr) => {
-    console.log('⏳ جاري الانتظار 15 ثانية لتحميل المتصفح...');
-    await sleep(15000);
+    console.log('⚠️ جاري محاولة تفعيل كود الإقتران...');
     try {
         const code = await client.requestPairingCode(PHONE_NUMBER);
         console.log('\n=======================================');
-        console.log('📌 كود الإقتران:', code);
+        console.log('📌 كود الإقتران الخاص بك هو:', code);
         console.log('=======================================\n');
-    } catch (e) { console.log('❌ خطأ في الإقتران:', e.message); }
+    } catch (e) { console.error('❌ فشل طلب الكود.'); }
 });
 
 client.on('ready', () => console.log('🎬 Bot BeOut is running!'));
-client.initialize();
+client.initialize().catch(err => { process.exit(1); });
