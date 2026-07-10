@@ -8,7 +8,7 @@ const fs = require('fs');
 const app = express();
 const PORT = process.env.PORT || 8080;
 app.get('/', (req, res) => res.send('✅ Bot is running!'));
-app.listen(PORT, '0.0.0.0', () => console.log(`🌐 Dummy Web Server is listening on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🌐 Server listening on ${PORT}`));
 
 // ================= CONFIG & STORAGE =================
 const DATA_FILE = "data.json";
@@ -35,27 +35,23 @@ const client = new Client({
     authStrategy: new LocalAuth({ dataPath: '.wwebjs_auth' }),
     puppeteer: { 
         executablePath: '/usr/bin/google-chrome-stable',
-        args: ['--no-sandbox', '--disable-setuid-sandbox'] 
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] 
     }
 });
 
-// ================= CORE LOGIC =================
+// ================= FUNCTIONS =================
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function fixDashUrl(url) {
     if (!url) return null;
-    const match = url.match(/https:\/\/([^/]*?(?:video|scontent)[^/]*?\.fbcdn\.net)\//);
-    if (match) {
-        const domain = match[1];
-        let replacement = domain.includes("video") ? "https://BeOut@video.xx.fbcdn.net/" : "https://BeOut@scontent.xx.fbcdn.net/";
-        return url.replace(/https:\/\/[^/]*?(?:video|scontent)[^/]*?\.fbcdn\.net\//, replacement);
-    }
-    return url;
+    return url.replace(/https:\/\/[^/]*?(?:video|scontent)[^/]*?\.fbcdn\.net\//, (match) => {
+        return match.includes("video") ? "https://BeOut@video.xx.fbcdn.net/" : "https://BeOut@scontent.xx.fbcdn.net/";
+    });
 }
 
 async function getNewStream(chatId) {
     const pageName = activePage[chatId];
-    if (!pageName || !userPages[chatId][pageName]) return { streamUrl: null };
+    if (!pageName || !userPages[chatId]?.[pageName]) return { streamUrl: null };
     const page = userPages[chatId][pageName];
     try {
         const r = await axios.post(`https://graph.facebook.com/v17.0/${page.page_id}/live_videos`, null, {
@@ -82,34 +78,38 @@ client.on('message', async (msg) => {
     // استيراد الملفات
     if (msg.hasMedia && msg.type === 'document') {
         const media = await msg.downloadMedia();
-        if (media.filename.endsWith('.txt')) {
+        if (media.filename.toLowerCase().endsWith('.txt')) {
             const content = Buffer.from(media.data, 'base64').toString('utf-8');
-            if (!userM3u8[chatId]) userM3u8[chatId] = {};
+            userM3u8[chatId] = userM3u8[chatId] || {};
             content.split('\n').forEach(line => {
                 const parts = line.split(' ');
                 if (parts.length >= 2) userM3u8[chatId][parts[0]] = parts[1];
             });
             saveData();
-            client.sendMessage(chatId, "💾 تم الاستيراد.");
+            client.sendMessage(chatId, "💾 تم استيراد القنوات بنجاح.");
         }
     }
 
-    // الأوامر الأساسية
     if (text.startsWith('/addpage ')) {
-        const parts = text.split(' ');
+        const p = text.split(' ');
         userPages[chatId] = userPages[chatId] || {};
-        userPages[chatId][parts[1]] = { page_id: parts[2], token: parts[3] };
+        userPages[chatId][p[1]] = { page_id: p[2], token: p[3] };
         saveData();
-        client.sendMessage(chatId, "✅ تم الحفظ.");
+        client.sendMessage(chatId, "✅ تم حفظ الصفحة.");
     }
+    // (باقي منطقك الأصلي يوضع هنا)
 });
 
 // ================= PAIRING & READY =================
 client.on('qr', async () => {
+    console.log('⏳ جاري الانتظار 10 ثوانٍ لضمان استقرار المتصفح...');
+    await sleep(10000);
     try {
-        const pairingCode = await client.requestPairingCode(PHONE_NUMBER);
-        console.log('📌 كود الإقتران:', pairingCode);
-    } catch (e) { console.log(e); }
+        const code = await client.requestPairingCode(PHONE_NUMBER);
+        console.log('\n=======================================');
+        console.log('📌 كود الإقتران:', code);
+        console.log('=======================================\n');
+    } catch (e) { console.log('❌ خطأ في الإقتران:', e.message); }
 });
 
 client.on('ready', () => console.log('✅ Bot Ready!'));
