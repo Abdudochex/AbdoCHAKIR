@@ -6,6 +6,8 @@ const pino = require('pino');
 const ADMINS = ['212621790049@s.whatsapp.net', '212775925339@s.whatsapp.net'];
 
 async function startBot() {
+    console.log("🚀 جاري تهيئة البوت...");
+    
     if (!fs.existsSync('./auth_info')) fs.mkdirSync('./auth_info');
     if (!fs.existsSync('./plugins')) fs.mkdirSync('./plugins');
 
@@ -14,44 +16,44 @@ async function startBot() {
     const sock = makeWASocket({
         logger: pino({ level: 'silent' }),
         auth: state,
-        printQRInTerminal: false,
-        connectTimeoutMs: 60000,
-        keepAliveIntervalMs: 10000
+        printQRInTerminal: false
     });
 
     sock.ev.on('creds.update', saveCreds);
 
-    // التحقق من الاتصال قبل طلب الكود
+    // تفعيل الاتصال فوراً
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect } = update;
         
         if (connection === 'close') {
+            console.log("⚠️ الاتصال مغلق، جاري إعادة المحاولة...");
             const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) startBot();
         } 
         
         else if (connection === 'open') {
-            console.log('✅ الاتصال مفتوح ومستقر!');
+            console.log('✅ تم الاتصال بنجاح!');
             
-            // طلب الكود فقط بعد التأكد من أن الاتصال مفتوح
+            // طلب الكود
             if (!sock.authState.creds.registered) {
+                console.log("⏳ جاري توليد رمز الإقتران...");
                 try {
-                    console.log("--- جاري طلب رمز الإقتران... ---");
                     const code = await sock.requestPairingCode('212621790049');
                     console.log("\n========================================");
-                    console.log(`[!] رمز الإقتران الخاص بك: ${code}`);
+                    console.log(`[!] رمز الإقتران الخاص بك هو: ${code}`);
+                    console.log("[!] الصقه في واتساب الآن");
                     console.log("========================================\n");
                 } catch (e) {
-                    console.log("فشل طلب الكود، الرجاء إعادة التشغيل.");
+                    console.log("❌ خطأ أثناء طلب الكود، يرجى إعادة التشغيل.");
                 }
             }
         }
     });
 
+    // باقي الأوامر كما هي (add, clear, getall, install)
     sock.ev.on('messages.upsert', async ({ messages }) => {
         const m = messages[0];
         if (!m.message || m.key.fromMe) return;
-
         const sender = m.key.remoteJid;
         if (!ADMINS.includes(sender)) return;
 
@@ -78,9 +80,9 @@ async function startBot() {
         } else if (command === '.install') {
             const lib = args[1];
             if (!lib) return;
-            sock.sendMessage(sender, { text: `⏳ جاري تحميل: ${lib}...` });
-            exec(`npm install ${lib}`, (error) => {
-                if (error) return sock.sendMessage(sender, { text: "❌ فشل التحميل." });
+            sock.sendMessage(sender, { text: `⏳ جاري التحميل: ${lib}...` });
+            exec(`npm install ${lib}`, (err) => {
+                if (err) return sock.sendMessage(sender, { text: "❌ فشل التحميل." });
                 sock.sendMessage(sender, { text: "✅ تم التحميل بنجاح." });
             });
         }
