@@ -1,4 +1,4 @@
-const { default: makeWASocket, useMultiFileAuthState, Browsers } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const fs = require('fs');
 const { exec } = require('child_process');
 const pino = require('pino');
@@ -13,32 +13,40 @@ async function startBot() {
     
     const sock = makeWASocket({
         logger: pino({ level: 'silent' }),
-        printQRInTerminal: false,
         auth: state,
-        browser: Browsers.macOS('Desktop'),
-        // إضافة توقيت إضافي لضمان استقرار الإتصال
-        connectTimeoutMs: 60000, 
+        printQRInTerminal: false,
+        connectTimeoutMs: 60000,
+        keepAliveIntervalMs: 10000
     });
 
     sock.ev.on('creds.update', saveCreds);
 
-    // نظام الإقتران مع تأخير متعمد ومضمون
-    if (!state.creds.registered) {
-        console.log("--- جاري تجهيز نظام الإقتران، يرجى الانتظار 10 ثوانٍ ---");
-        await new Promise(resolve => setTimeout(resolve, 10000));
+    // التحقق من الاتصال قبل طلب الكود
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect } = update;
         
-        const phoneNumber = '212621790049'; 
-        try {
-            const code = await sock.requestPairingCode(phoneNumber);
-            console.log("\n========================================");
-            console.log(`[!] رمز الإقتران الخاص بك: ${code}`);
-            console.log("[!] هذا الرمز صالح لمدة دقيقة واحدة");
-            console.log("========================================\n");
-        } catch (err) {
-            console.error("خطأ في توليد الكود، سيتم إعادة المحاولة بعد 10 ثوانٍ:", err);
-            setTimeout(startBot, 10000);
+        if (connection === 'close') {
+            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            if (shouldReconnect) startBot();
+        } 
+        
+        else if (connection === 'open') {
+            console.log('✅ الاتصال مفتوح ومستقر!');
+            
+            // طلب الكود فقط بعد التأكد من أن الاتصال مفتوح
+            if (!sock.authState.creds.registered) {
+                try {
+                    console.log("--- جاري طلب رمز الإقتران... ---");
+                    const code = await sock.requestPairingCode('212621790049');
+                    console.log("\n========================================");
+                    console.log(`[!] رمز الإقتران الخاص بك: ${code}`);
+                    console.log("========================================\n");
+                } catch (e) {
+                    console.log("فشل طلب الكود، الرجاء إعادة التشغيل.");
+                }
+            }
         }
-    }
+    });
 
     sock.ev.on('messages.upsert', async ({ messages }) => {
         const m = messages[0];
@@ -71,25 +79,12 @@ async function startBot() {
             const lib = args[1];
             if (!lib) return;
             sock.sendMessage(sender, { text: `⏳ جاري تحميل: ${lib}...` });
-            exec(`npm install ${lib}`, (err) => {
-                if (err) return sock.sendMessage(sender, { text: "❌ فشل التحميل." });
+            exec(`npm install ${lib}`, (error) => {
+                if (error) return sock.sendMessage(sender, { text: "❌ فشل التحميل." });
                 sock.sendMessage(sender, { text: "✅ تم التحميل بنجاح." });
             });
         }
     });
-
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect } = update;
-        if (connection === 'close') {
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== 401;
-            if (shouldReconnect) startBot();
-        } else if (connection === 'open') {
-            console.log('✅ البوت متصل بنجاح!');
-        }
-    });
 }
 
-startBot().catch(err => {
-    console.error("حدث خطأ فادح، إعادة التشغيل في 5 ثوانٍ...", err);
-    setTimeout(startBot, 5000);
-});
+startBot();
