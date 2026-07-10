@@ -6,27 +6,23 @@ const fs = require('fs');
 
 // ================= DUMMY WEB SERVER =================
 const app = express();
-const PORT = process.env.PORT || 3000;
-app.get('/', (req, res) => res.send('✅ Bot is Alive!'));
-app.listen(PORT, '0.0.0.0', () => console.log(`🌐 Server running on port ${PORT}`));
+const PORT = process.env.PORT || 8080;
+app.get('/', (req, res) => res.send('✅ WhatsApp Bot is Running Successfully!'));
+app.listen(PORT, '0.0.0.0', () => console.log(`🌐 Dummy Web Server is listening on port ${PORT}`));
 
 // ================= CONFIG =================
 const DATA_FILE = "data.json";
 const PHONE_NUMBER = "212621790049"; 
 
-// إعدادات المتصفح المخصصة للحاوية (Dockerfile)
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: '.wwebjs_auth' }),
     puppeteer: { 
         executablePath: '/usr/bin/google-chrome-stable',
-        args: [
-            '--no-sandbox', 
-            '--disable-setuid-sandbox'
-        ] 
+        args: ['--no-sandbox', '--disable-setuid-sandbox'] 
     }
 });
 
-// ================= STORAGE =================
+// ================= STORAGE & JSON =================
 function loadData() {
     if (!fs.existsSync(DATA_FILE)) return { pages: {}, channels: {} };
     try { return JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8')); } 
@@ -34,7 +30,7 @@ function loadData() {
 }
 
 function saveData() {
-    fs.writeFileSync(DATA_FILE, JSON.stringify({ pages: userPages, channels: userM3u8 }, null, 4));
+    fs.writeFileSync(DATA_FILE, JSON.stringify({ pages: userPages, channels: userM3u8 }, null, 4), 'utf-8');
 }
 
 let dataStore = loadData();
@@ -94,13 +90,30 @@ async function streamThread(chatId, source, name) {
     }
 }
 
-// ================= BOT LOGIC =================
+// ================= BOT COMMANDS =================
 client.on('message', async (msg) => {
     const chatId = msg.from;
-    // (هنا يوضع باقي منطق الأوامر الخاص بك كما هو تماماً...)
-    // الكود يعمل بنفس المنطق الذي تريده بالضبط
+    const text = msg.body;
+    // (باقي أوامرك الأصلية هنا)
+    if (text.startsWith('/addpage ')) { /* ... منطقك الأصلي ... */ }
+    // ... إلخ
 });
 
-client.on('qr', (qr) => console.log('QR Code generated!'));
-client.on('ready', () => console.log('Bot is ready!'));
+// ================= CONNECTION & PAIRING =================
+client.on('qr', async () => {
+    console.log('⏳ جاري طلب كود الإقتران الرقمي...');
+    try {
+        const pairingCode = await client.requestPairingCode(PHONE_NUMBER);
+        console.log('\n=======================================');
+        console.log('📌 كود الإقتران الخاص بك هو:', pairingCode);
+        console.log('💡 افتح الواتساب > الأجهزة المرتبطة > ربط برقم الهاتف > أدخل الكود.');
+        console.log('=======================================\n');
+    } catch (err) { console.error('❌ تعذر طلب كود الإقتران:', err.message); }
+});
+
+client.on('ready', () => {
+    console.log('✅ Bot is ready and connected!');
+    client.sendMessage(`${PHONE_NUMBER}@c.us`, '✅ البوت متصل وجاهز للعمل.');
+});
+
 client.initialize();
