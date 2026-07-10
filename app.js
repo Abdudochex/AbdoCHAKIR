@@ -64,6 +64,17 @@ function getMessageText(msg) {
   );
 }
 
+// بعض الرسائل تصل ملفوفة داخل ephemeralMessage / viewOnceMessage (خاصة مع الرسائل المؤقتة)
+// بدون فك هذا التغليف، النص يصل فارغاً ولا يبدأ بالبريفكس فيُتجاهل الأمر بصمت.
+function unwrapMessage(message) {
+  if (!message) return message;
+  if (message.ephemeralMessage) return unwrapMessage(message.ephemeralMessage.message);
+  if (message.viewOnceMessage) return unwrapMessage(message.viewOnceMessage.message);
+  if (message.viewOnceMessageV2) return unwrapMessage(message.viewOnceMessageV2.message);
+  if (message.documentWithCaptionMessage) return unwrapMessage(message.documentWithCaptionMessage.message);
+  return message;
+}
+
 // تخزين الإضافات المحمّلة في الذاكرة
 const loadedPlugins = {};
 
@@ -138,11 +149,23 @@ async function startBot() {
 
   sock.ev.on('messages.upsert', async ({ messages }) => {
     const msg = messages[0];
-    if (!msg?.message || msg.key.fromMe) return;
+    if (!msg?.message) return;
 
-    const sender = msg.key.participant || msg.key.remoteJid;
-    const text = getMessageText(msg).trim();
+    // فك تغليف الرسائل المؤقتة/الاختفاء قبل قراءة النص
+    msg.message = unwrapMessage(msg.message);
+
     const from = msg.key.remoteJid;
+
+    // إذا كانت الرسالة مرسلة من نفس رقم البوت (fromMe = true)، فإن المُرسل الحقيقي
+    // هو حساب البوت نفسه وليس "remoteJid" (الذي يمثل الطرف الآخر في الشات).
+    // بدون هذا التصحيح، إرسال الأوامر من نفس رقم البوت لا يُتعرّف عليه كأدمن أبداً.
+    const sender = msg.key.fromMe
+      ? sock.user?.id?.split(':')[0].split('@')[0] + '@s.whatsapp.net'
+      : msg.key.participant || msg.key.remoteJid;
+
+    const text = getMessageText(msg).trim();
+
+    console.log(`[MSG] from=${from} sender=${sender} fromMe=${msg.key.fromMe} text="${text}"`);
 
     // نتجاهل أي رسالة لا تبدأ بالبريفكس (لا سلام، لا ضحك، لا أي كلام عادي)
     if (!text.startsWith(PREFIX)) return;
@@ -151,7 +174,10 @@ async function startBot() {
     const command = args.shift().toLowerCase();
 
     // كل الأوامر أدناه حصرية على الأدمن فقط
-    if (!isAdmin(sender)) return;
+    if (!isAdmin(sender)) {
+      console.log(`[AUTH] تم رفض الأمر "${command}" من ${sender} (ليس أدمن)`);
+      return;
+    }
 
     try {
       switch (command) {
