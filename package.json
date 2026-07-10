@@ -1,0 +1,17 @@
+{
+  "name": "whatsapp-pairing-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp bot with pairing code, .add/.clear/.getall commands and library installer",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.9",
+    "pino": "^9.3.2",
+    "express": "^4.19.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
