@@ -5,16 +5,16 @@ const axios = require('axios');
 const fs = require('fs');
 
 // ================= DUMMY WEB SERVER (RAILWAY FIX) =================
-// هذا الجزء ضروري جداً لكي لا تقوم منصة Railway بإغلاق البوت
+// هذا الجزء يمنع Railway من قتل البوت ظناً منها أنه معطل
 const app = express();
 const PORT = process.env.PORT || 3000;
 app.get('/', (req, res) => res.send('✅ WhatsApp Bot is Running Successfully!'));
-app.listen(PORT, () => console.log(`🌐 Dummy Web Server is listening on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🌐 Dummy Web Server is listening on port ${PORT}`));
 
 // ================= CONFIG =================
 const DATA_FILE = "data.json";
 
-// ⚠️ ضع رقم هاتفك هنا مع رمز الدولة وبدون علامة الزائد (+)
+// تم وضع رقمك الخاص هنا
 const PHONE_NUMBER = "212621790049"; 
 
 // تهيئة المتصفح بإعدادات قوية لمنع الانهيار (Crash) على السيرفرات السحابية
@@ -28,6 +28,7 @@ const client = new Client({
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
+            '--single-process',
             '--disable-gpu'
         ] 
     }
